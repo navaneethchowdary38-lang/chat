@@ -11,7 +11,8 @@ from langchain_google_genai import (
 )
 from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
-from langchain.chains import RetrievalQA
+# ✅ Updated import path for LangChain ≥1.0
+from langchain.chains.retrieval_qa.base import RetrievalQA
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 # --------------------------------------------------
@@ -24,13 +25,8 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 # PDF PROCESSING
 # --------------------------------------------------
 def get_pdf_text(pdf_docs):
-    """
-    Read text from uploaded PDFs. Streamlit returns UploadedFile objects.
-    Wrap them with BytesIO for PyPDF2 compatibility.
-    """
     text = ""
     for pdf in pdf_docs:
-        # Reset file pointer and read bytes
         pdf.seek(0)
         reader = PdfReader(BytesIO(pdf.read()))
         for page in reader.pages:
@@ -39,10 +35,6 @@ def get_pdf_text(pdf_docs):
 
 
 def get_text_chunks(text):
-    """
-    Split the raw text into chunks suitable for embedding.
-    Adjust chunk_size/chunk_overlap based on your PDFs.
-    """
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=10000,
         chunk_overlap=1000
@@ -51,9 +43,6 @@ def get_text_chunks(text):
 
 
 def create_vector_store(text_chunks):
-    """
-    Create a FAISS vector store locally from text chunks using Google embeddings.
-    """
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/embedding-001",
         google_api_key=GOOGLE_API_KEY
@@ -63,9 +52,6 @@ def create_vector_store(text_chunks):
 
 
 def load_vector_store():
-    """
-    Load the FAISS store. allow_dangerous_deserialization is required for LC 1.x.
-    """
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/embedding-001",
         google_api_key=GOOGLE_API_KEY
@@ -77,12 +63,9 @@ def load_vector_store():
     )
 
 # --------------------------------------------------
-# QA CHAIN (LANGCHAIN 1.x)
+# QA CHAIN
 # --------------------------------------------------
 def get_qa_chain(vectorstore):
-    """
-    Build a RetrievalQA chain that stuffs retrieved docs into a custom prompt.
-    """
     llm = ChatGoogleGenerativeAI(
         model="gemini-pro",
         temperature=0.4,
@@ -112,10 +95,6 @@ def get_qa_chain(vectorstore):
 
 
 def answer_question(user_question):
-    """
-    Answer a user question using the loaded vector store and QA chain.
-    Handles both possible invoke signatures across LC versions.
-    """
     if not os.path.exists("faiss_index"):
         st.warning("Please upload and analyze PDFs first.")
         return
@@ -123,14 +102,12 @@ def answer_question(user_question):
     vectorstore = load_vector_store()
     qa_chain = get_qa_chain(vectorstore)
 
-    # Try the dict format first; fallback to plain string if needed.
     try:
         response = qa_chain.invoke({"query": user_question})
     except Exception:
         response = qa_chain.invoke(user_question)
 
     st.markdown("### ✅ Answer")
-    # Some LC versions return {"result": "..."}; others return a string or dict
     if isinstance(response, dict) and "result" in response:
         st.write(response["result"])
     else:
@@ -145,7 +122,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Quick environment sanity check
 with st.sidebar:
     st.title("📂 Upload PDFs")
     if GOOGLE_API_KEY is None or GOOGLE_API_KEY.strip() == "":

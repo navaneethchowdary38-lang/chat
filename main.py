@@ -96,11 +96,17 @@ Answer:
 
 
 def answer_question(user_question):
+    if not os.path.exists("faiss_index"):
+        st.warning("Please upload and analyze PDFs first.")
+        return
+
     vectorstore = load_vector_store()
     qa_chain = get_qa_chain(vectorstore)
     response = qa_chain.invoke({"query": user_question})
+
     st.markdown("### ✅ Answer")
     st.write(response["result"])
+
 
 # --------------------------------------------------
 # STREAMLIT UI
@@ -140,3 +146,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

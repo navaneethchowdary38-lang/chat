@@ -1,11 +1,11 @@
 streamlit
 python-dotenv
-langchain-google-genai  
-langchain-community
+
+langchain
 langchain-core
+langchain-community
+langchain-google-genai
 
 google-generativeai
-PYPDF2
+PyPDF2
 faiss-cpu
-
-os

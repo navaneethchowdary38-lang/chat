@@ -1,4 +1,6 @@
 import os
+from io import BytesIO
+
 import streamlit as st
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
@@ -22,15 +24,25 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 # PDF PROCESSING
 # --------------------------------------------------
 def get_pdf_text(pdf_docs):
+    """
+    Read text from uploaded PDFs. Streamlit returns UploadedFile objects.
+    Wrap them with BytesIO for PyPDF2 compatibility.
+    """
     text = ""
     for pdf in pdf_docs:
-        reader = PdfReader(pdf)
+        # Reset file pointer and read bytes
+        pdf.seek(0)
+        reader = PdfReader(BytesIO(pdf.read()))
         for page in reader.pages:
             text += page.extract_text() or ""
     return text
 
 
 def get_text_chunks(text):
+    """
+    Split the raw text into chunks suitable for embedding.
+    Adjust chunk_size/chunk_overlap based on your PDFs.
+    """
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=10000,
         chunk_overlap=1000
@@ -39,6 +51,9 @@ def get_text_chunks(text):
 
 
 def create_vector_store(text_chunks):
+    """
+    Create a FAISS vector store locally from text chunks using Google embeddings.
+    """
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/embedding-001",
         google_api_key=GOOGLE_API_KEY
@@ -48,6 +63,9 @@ def create_vector_store(text_chunks):
 
 
 def load_vector_store():
+    """
+    Load the FAISS store. allow_dangerous_deserialization is required for LC 1.x.
+    """
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/embedding-001",
         google_api_key=GOOGLE_API_KEY
@@ -62,51 +80,61 @@ def load_vector_store():
 # QA CHAIN (LANGCHAIN 1.x)
 # --------------------------------------------------
 def get_qa_chain(vectorstore):
+    """
+    Build a RetrievalQA chain that stuffs retrieved docs into a custom prompt.
+    """
     llm = ChatGoogleGenerativeAI(
         model="gemini-pro",
-        temperature=0.4
+        temperature=0.4,
+        google_api_key=GOOGLE_API_KEY
     )
 
     prompt = PromptTemplate(
-        template="""
-You are a helpful AI assistant.
-Use the provided context to answer the question.
-If the answer is not found in the context, say "I don't know".
-
-Context:
-{context}
-
-Question:
-{question}
-
-Answer:
-""",
+        template=(
+            "You are a helpful AI assistant.\n"
+            "Use ONLY the provided context to answer the question.\n"
+            "If the answer is not found in the context, say \"I don't know\".\n\n"
+            "Context:\n{context}\n\n"
+            "Question:\n{question}\n\n"
+            "Answer:"
+        ),
         input_variables=["context", "question"]
     )
 
     qa_chain = RetrievalQA.from_chain_type(
         llm=llm,
         chain_type="stuff",
-        retriever=vectorstore.as_retriever(),
+        retriever=vectorstore.as_retriever(search_kwargs={"k": 5}),
         chain_type_kwargs={"prompt": prompt},
         return_source_documents=False
     )
-
     return qa_chain
 
 
 def answer_question(user_question):
+    """
+    Answer a user question using the loaded vector store and QA chain.
+    Handles both possible invoke signatures across LC versions.
+    """
     if not os.path.exists("faiss_index"):
         st.warning("Please upload and analyze PDFs first.")
         return
 
     vectorstore = load_vector_store()
     qa_chain = get_qa_chain(vectorstore)
-    response = qa_chain.invoke({"query": user_question})
+
+    # Try the dict format first; fallback to plain string if needed.
+    try:
+        response = qa_chain.invoke({"query": user_question})
+    except Exception:
+        response = qa_chain.invoke(user_question)
 
     st.markdown("### ✅ Answer")
-    st.write(response["result"])
-
+    # Some LC versions return {"result": "..."}; others return a string or dict
+    if isinstance(response, dict) and "result" in response:
+        st.write(response["result"])
+    else:
+        st.write(response)
 
 # --------------------------------------------------
 # STREAMLIT UI
@@ -117,8 +145,13 @@ st.set_page_config(
     layout="wide"
 )
 
+# Quick environment sanity check
 with st.sidebar:
     st.title("📂 Upload PDFs")
+    if GOOGLE_API_KEY is None or GOOGLE_API_KEY.strip() == "":
+        st.error("Google API key not found. Set GOOGLE_API_KEY in your .env.")
+        st.stop()
+
     pdf_docs = st.file_uploader(
         "Upload PDF files",
         type=["pdf"],
@@ -131,9 +164,15 @@ with st.sidebar:
         else:
             with st.spinner("Processing PDFs..."):
                 raw_text = get_pdf_text(pdf_docs)
-                chunks = get_text_chunks(raw_text)
-                create_vector_store(chunks)
-                st.success("Vector database created successfully!")
+                if not raw_text.strip():
+                    st.warning("No text extracted from PDFs. Check if they are scanned images.")
+                else:
+                    chunks = get_text_chunks(raw_text)
+                    if not chunks:
+                        st.warning("No text chunks generated. Try reducing chunk_size or checking input.")
+                    else:
+                        create_vector_store(chunks)
+                        st.success("Vector database created successfully!")
 
 def main():
     st.title("📄 LLM PDF Analyzer")
@@ -146,4 +185,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
